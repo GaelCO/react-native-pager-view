@@ -36,6 +36,7 @@ import { PagerHookExample } from './PagerHookExample';
 import { NestedHorizontalScrollViewExample } from './NestedHorizontalScrollViewExample';
 import { Issue1098NestedPagerRepro } from './Issue1098NestedPagerRepro';
 import { Issue1099SafeAreaRepro } from './Issue1099SafeAreaRepro';
+import { Issue1103MaterialTopTabRepro } from './Issue1103MaterialTopTabRepro';
 
 function BasicPagerViewExampleScreen() {
   return <BasicPagerViewExample isHorizontal={true} />;
@@ -115,6 +116,10 @@ const ghIssues: Example[] = [
   {
     component: Issue1099SafeAreaRepro,
     name: 'Issue #1099 Safe Area Repro',
+  },
+  {
+    component: Issue1103MaterialTopTabRepro,
+    name: 'Issue #1103 Material Top Tab Repro',
   },
 ];
 

@@ -1,0 +1,29 @@
+appId: com.pagerviewexample
+tags:
+  - android
+  - regression
+---
+- runFlow: ../setup/issue_1103_material_top_tab_repro_setup.yaml
+
+- assertVisible:
+    id: 'issue-1103-tab-1-content'
+
+- tapOn:
+    id: 'issue-1103-push-detail'
+
+- extendedWaitUntil:
+    visible:
+      id: 'issue-1103-detail-screen'
+    timeout: 5000
+
+- tapOn:
+    id: 'issue-1103-go-back'
+
+# On affected 9.0.x Android builds, the Compose-hosted tab content stays
+# blank after the Fragment is covered and revealed again, even though the
+# tab bar itself renders correctly. This assertion is expected to fail on
+# those builds and pass once the regression is fixed.
+- extendedWaitUntil:
+    visible:
+      id: 'issue-1103-tab-1-content'
+    timeout: 5000
