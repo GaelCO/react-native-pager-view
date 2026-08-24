@@ -21,7 +21,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.facebook.react.bridge.ReactContext
@@ -37,7 +36,17 @@ import kotlin.math.sign
 @OptIn(ExperimentalFoundationApi::class)
 class ComposePagerView(context: Context) : FrameLayout(context) {
   private val reactContext = context as ReactContext
-  private val composeView = ComposeView(context)
+  // react-native-screens fully removes and re-adds this screen's Fragment
+  // (rather than merely hiding it) while it's covered by another screen
+  // (see #1103), destroying that Fragment's view-tree Lifecycle. A
+  // ComposeView whose composition survives that teardown (e.g. by disposing
+  // and recreating just the composition, or by keeping the same ComposeView
+  // permanently attached with its own Recomposer) still never recomposes
+  // again once reattached - its coroutines are left permanently stuck.
+  // Recreating the ComposeView itself from scratch on every attach sidesteps
+  // that dead state entirely: it's indistinguishable from the first mount,
+  // which always renders correctly.
+  private var composeView: ComposeView? = null
   private val pages = mutableStateListOf<View>()
   private val scrollEnabledState = mutableStateOf(true)
   private val orientationState = mutableStateOf(Orientation.Horizontal)
@@ -57,43 +66,51 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
   private val scrollCommandState = mutableStateOf<ScrollCommand?>(null)
   private var lastEmittedScrollState: String? = null
   private var lastEmittedPageSelected: Int? = null
-  private var didSetContent = false
 
   init {
     id = View.generateViewId()
     layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
     isSaveEnabled = false
-
-    composeView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-    composeView.isSaveEnabled = false
-    composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
     applyOverScrollMode()
     touchSlop = ViewConfiguration.get(context).scaledTouchSlop
   }
 
+  private fun createComposeView(): ComposeView {
+    return ComposeView(context).apply {
+      layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+      isSaveEnabled = false
+      layoutDirection = androidLayoutDirection()
+      overScrollMode = androidOverScrollMode()
+    }
+  }
+
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    if (composeView.parent == null) {
-      super.addView(composeView)
-      post {
-        measureAndLayoutComposeView()
-      }
-    }
-    if (!didSetContent) {
-      didSetContent = true
-      composeView.setContent {
+    if (composeView == null) {
+      val view = createComposeView()
+      composeView = view
+      super.addView(view)
+      view.setContent {
         PagerContent()
       }
+    }
+    post {
+      measureAndLayoutComposeView()
     }
   }
 
   override fun onDetachedFromWindow() {
     updateSameOrientationAncestorsGestureState(false)
-    if (composeView.parent === this) {
-      super.removeView(composeView)
-      didSetContent = false
-    }
+    // Discard composeView entirely rather than merely disposing its
+    // composition: it's recreated from scratch on the next attach (see the
+    // comment on the composeView field above).
+    composeView?.let { view -> super.removeView(view) }
+    composeView = null
     super.onDetachedFromWindow()
+  }
+
+  fun dispose() {
+    composeView?.disposeComposition()
   }
 
   override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -149,7 +166,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
     val width = width.takeIf { it > 0 } ?: measuredWidth
     val height = height.takeIf { it > 0 } ?: measuredHeight
     if (measureComposeView(width, height)) {
-      composeView.layout(0, 0, width, height)
+      composeView?.layout(0, 0, width, height)
     }
   }
 
@@ -157,11 +174,12 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
     width: Int = measuredWidth,
     height: Int = measuredHeight
   ): Boolean {
-    if (composeView.parent !== this || width <= 0 || height <= 0) {
+    val view = composeView
+    if (view == null || view.parent !== this || width <= 0 || height <= 0) {
       return false
     }
 
-    composeView.measure(
+    view.measure(
       MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
       MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
     )
@@ -238,13 +256,16 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
 
   fun setLayoutDirection(value: String) {
     layoutDirectionState.value = if (value == "rtl") LayoutDirection.Rtl else LayoutDirection.Ltr
-    val androidLayoutDirection = if (layoutDirectionState.value == LayoutDirection.Rtl) {
+    layoutDirection = androidLayoutDirection()
+    composeView?.layoutDirection = androidLayoutDirection()
+  }
+
+  private fun androidLayoutDirection(): Int {
+    return if (layoutDirectionState.value == LayoutDirection.Rtl) {
       View.LAYOUT_DIRECTION_RTL
     } else {
       View.LAYOUT_DIRECTION_LTR
     }
-    layoutDirection = androidLayoutDirection
-    composeView.layoutDirection = androidLayoutDirection
   }
 
   fun setOffscreenPageLimit(value: Int) {
@@ -265,13 +286,17 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
   }
 
   private fun applyOverScrollMode() {
-    val androidOverScrollMode = when (overScrollModeState.value) {
+    val androidOverScrollMode = androidOverScrollMode()
+    overScrollMode = androidOverScrollMode
+    composeView?.overScrollMode = androidOverScrollMode
+  }
+
+  private fun androidOverScrollMode(): Int {
+    return when (overScrollModeState.value) {
       OverScrollMode.Never -> View.OVER_SCROLL_NEVER
       OverScrollMode.Always -> View.OVER_SCROLL_ALWAYS
       OverScrollMode.Auto -> View.OVER_SCROLL_IF_CONTENT_SCROLLS
     }
-    overScrollMode = androidOverScrollMode
-    composeView.overScrollMode = androidOverScrollMode
   }
 
   private fun setSameOrientationChildGestureActive(value: Boolean) {
@@ -412,7 +437,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
       return
     }
 
-    val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, pageCount - 1)) {
+    // Use currentPage, not initialPage: this composable is recomposed from
+    // scratch every time composeView is recreated (see the comment on the
+    // composeView field), and initialPage only ever reflects the very first
+    // page this view was mounted with - currentPage is the one field that's
+    // kept up to date as the user actually navigates, so it's what lets the
+    // pager resume where the user left it after being covered and revealed
+    // again, instead of jumping back to its original initial page.
+    val pagerState = rememberPagerState(initialPage = currentPage.coerceIn(0, pageCount - 1)) {
       pages.size
     }
 
