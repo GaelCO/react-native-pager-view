@@ -21,8 +21,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.setViewTreeLifecycleOwner
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.uimanager.UIManagerHelper
 import com.reactnativepagerview.event.PageScrollEvent
@@ -38,14 +43,16 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
   private val reactContext = context as ReactContext
   // react-native-screens fully removes and re-adds this screen's Fragment
   // (rather than merely hiding it) while it's covered by another screen
-  // (see #1103), destroying that Fragment's view-tree Lifecycle. A
-  // ComposeView whose composition survives that teardown (e.g. by disposing
-  // and recreating just the composition, or by keeping the same ComposeView
-  // permanently attached with its own Recomposer) still never recomposes
-  // again once reattached - its coroutines are left permanently stuck.
-  // Recreating the ComposeView itself from scratch on every attach sidesteps
-  // that dead state entirely: it's indistinguishable from the first mount,
-  // which always renders correctly.
+  // (see #1103), destroying that Fragment's view-tree Lifecycle. Compose's
+  // default composition-disposal strategies key off that ambient Lifecycle,
+  // so a ComposeView left to use them gets torn down on every cover/reveal
+  // cycle - and rebuilding the composition from scratch each time also
+  // discarded every page's native view host, resetting their state (e.g. a
+  // FlatList's scroll position, see #1104). Giving the ComposeView its own
+  // Lifecycle - one we control instead of the ambient, repeatedly-destroyed
+  // one - lets the composition (and each page's host) survive the cycle
+  // untouched. It only reaches DESTROYED for real in dispose() below.
+  private val composeLifecycleOwner = ComposeViewLifecycleOwner()
   private var composeView: ComposeView? = null
   private val pages = mutableStateListOf<View>()
   private val scrollEnabledState = mutableStateOf(true)
@@ -81,6 +88,13 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
       isSaveEnabled = false
       layoutDirection = androidLayoutDirection()
       overScrollMode = androidOverScrollMode()
+      // Bind our own Lifecycle before the composition is created, so Compose
+      // resolves it instead of walking up to the ambient (and repeatedly
+      // destroyed) Fragment view-tree Lifecycle - see the field comment above.
+      setViewTreeLifecycleOwner(composeLifecycleOwner)
+      setViewCompositionStrategy(
+        ViewCompositionStrategy.DisposeOnLifecycleDestroyed(composeLifecycleOwner)
+      )
     }
   }
 
@@ -101,16 +115,15 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
 
   override fun onDetachedFromWindow() {
     updateSameOrientationAncestorsGestureState(false)
-    // Discard composeView entirely rather than merely disposing its
-    // composition: it's recreated from scratch on the next attach (see the
-    // comment on the composeView field above).
-    composeView?.let { view -> super.removeView(view) }
-    composeView = null
+    // composeView is intentionally left attached and alive here: its
+    // Lifecycle is self-owned (see composeLifecycleOwner) and only reaches
+    // DESTROYED in dispose(), so there is nothing to tear down on a mere
+    // window detach.
     super.onDetachedFromWindow()
   }
 
   fun dispose() {
-    composeView?.disposeComposition()
+    composeLifecycleOwner.destroy()
   }
 
   override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -437,14 +450,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
       return
     }
 
-    // Use currentPage, not initialPage: this composable is recomposed from
-    // scratch every time composeView is recreated (see the comment on the
-    // composeView field), and initialPage only ever reflects the very first
-    // page this view was mounted with - currentPage is the one field that's
-    // kept up to date as the user actually navigates, so it's what lets the
-    // pager resume where the user left it after being covered and revealed
-    // again, instead of jumping back to its original initial page.
-    val pagerState = rememberPagerState(initialPage = currentPage.coerceIn(0, pageCount - 1)) {
+    val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, pageCount - 1)) {
       pages.size
     }
 
@@ -636,5 +642,23 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
     } else {
       offscreenPageLimitState.value.coerceAtLeast(0)
     }
+  }
+}
+
+// A Lifecycle that isn't derived from the ambient Fragment/Activity: it
+// starts RESUMED and only moves to DESTROYED when destroy() is called
+// explicitly, so it survives being covered/revealed by react-native-screens'
+// Fragment remove+re-add (see the composeLifecycleOwner field comment on
+// ComposePagerView above).
+private class ComposeViewLifecycleOwner : LifecycleOwner {
+  private val registry = LifecycleRegistry(this).apply {
+    currentState = Lifecycle.State.RESUMED
+  }
+
+  override val lifecycle: Lifecycle
+    get() = registry
+
+  fun destroy() {
+    registry.currentState = Lifecycle.State.DESTROYED
   }
 }

@@ -37,6 +37,7 @@ import { NestedHorizontalScrollViewExample } from './NestedHorizontalScrollViewE
 import { Issue1098NestedPagerRepro } from './Issue1098NestedPagerRepro';
 import { Issue1099SafeAreaRepro } from './Issue1099SafeAreaRepro';
 import { Issue1103MaterialTopTabRepro } from './Issue1103MaterialTopTabRepro';
+import { Issue1104MaterialTopTabFlatListRepro } from './Issue1104MaterialTopTabFlatListRepro';
 
 function BasicPagerViewExampleScreen() {
   return <BasicPagerViewExample isHorizontal={true} />;
@@ -120,6 +121,10 @@ const ghIssues: Example[] = [
   {
     component: Issue1103MaterialTopTabRepro,
     name: 'Issue #1103 Material Top Tab Repro',
+  },
+  {
+    component: Issue1104MaterialTopTabFlatListRepro,
+    name: 'Issue #1104 Material Top Tab FlatList Repro',
   },
 ];
 

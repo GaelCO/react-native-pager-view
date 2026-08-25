@@ -1,0 +1,33 @@
+appId: com.pagerviewexample
+tags:
+  - android
+  - regression
+---
+- runFlow: ../setup/issue_1104_material_top_tab_flatlist_repro_setup.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'issue-1104-row-Row 59'
+    direction: DOWN
+
+- assertVisible:
+    id: 'issue-1104-row-Row 59'
+
+- tapOn:
+    id: 'issue-1104-push-detail'
+
+- extendedWaitUntil:
+    visible:
+      id: 'issue-1104-detail-screen'
+    timeout: 5000
+
+- tapOn:
+    id: 'issue-1104-go-back'
+
+# On affected builds, the pager rebuilds each page's AndroidView host from
+# scratch after the Fragment is covered and revealed again, which resets the
+# FlatList's native scroll position back to the top. This assertion checks
+# that the last row is still visible without scrolling again - it is
+# expected to fail on those builds and pass once the regression is fixed.
+- assertVisible:
+    id: 'issue-1104-row-Row 59'
